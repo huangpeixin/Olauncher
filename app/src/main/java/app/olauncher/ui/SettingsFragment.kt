@@ -19,7 +19,9 @@ import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
+import kotlinx.coroutines.launch
 import app.olauncher.BuildConfig
 import app.olauncher.MainViewModel
 import app.olauncher.R
@@ -82,6 +84,7 @@ class SettingsFragment : Fragment(), View.OnClickListener, View.OnLongClickListe
         populateAlignment()
         populateStatusBar()
         populateDateTime()
+        populateWeather()
         populateSwipeApps()
         populateSwipeDownAction()
         populateActionHints()
@@ -128,6 +131,8 @@ class SettingsFragment : Fragment(), View.OnClickListener, View.OnLongClickListe
             R.id.dateTimeOn -> toggleDateTime(Constants.DateTime.ON)
             R.id.dateTimeOff -> toggleDateTime(Constants.DateTime.OFF)
             R.id.dateOnly -> toggleDateTime(Constants.DateTime.DATE_ONLY)
+            R.id.weatherOnOff -> toggleWeather()
+            R.id.weatherLogBtn -> showWeatherLog()
             R.id.appThemeText -> binding.appThemeSelectLayout.visibility = View.VISIBLE
             R.id.themeLight -> updateTheme(AppCompatDelegate.MODE_NIGHT_NO)
             R.id.themeDark -> updateTheme(AppCompatDelegate.MODE_NIGHT_YES)
@@ -225,6 +230,8 @@ class SettingsFragment : Fragment(), View.OnClickListener, View.OnLongClickListe
         binding.dateTimeOn.setOnClickListener(this)
         binding.dateTimeOff.setOnClickListener(this)
         binding.dateOnly.setOnClickListener(this)
+        binding.weatherOnOff?.setOnClickListener(this)
+        binding.weatherLogBtn?.setOnClickListener(this)
         binding.swipeLeftApp.setOnClickListener(this)
         binding.swipeRightApp.setOnClickListener(this)
         binding.swipeDownAction.setOnClickListener(this)
@@ -337,6 +344,84 @@ class SettingsFragment : Fragment(), View.OnClickListener, View.OnLongClickListe
                 else -> R.string.off
             }
         )
+    }
+
+    private fun toggleWeather() {
+        prefs.weatherEnabled = !prefs.weatherEnabled
+        populateWeather()
+        if (!prefs.weatherEnabled) {
+            prefs.weatherCacheData = ""
+            prefs.weatherCacheTime = 0L
+        }
+        viewModel.refreshHome(false)
+    }
+
+    private fun populateWeather() {
+        binding.weatherOnOff?.text = getString(if (prefs.weatherEnabled) R.string.on else R.string.off)
+    }
+
+    private fun showWeatherLog() {
+        val weatherLog = StringBuilder()
+        weatherLog.append("天气调试日志\n")
+        weatherLog.append("================\n\n")
+        weatherLog.append("开关: ${if (prefs.weatherEnabled) "开" else "关"}\n")
+        weatherLog.append("API Host: ${prefs.weatherApiHost}\n")
+        weatherLog.append("城市 ID: ${prefs.weatherLocation}\n")
+        weatherLog.append("GPS 纬度: ${prefs.weatherGpsLat}\n")
+        weatherLog.append("GPS 经度: ${prefs.weatherGpsLng}\n")
+        weatherLog.append("GPS 时间: ${if (prefs.weatherGpsTime > 0) android.text.format.DateFormat.format("yyyy-MM-dd HH:mm", prefs.weatherGpsTime).toString() else "无"}\n")
+        weatherLog.append("缓存时间: ${prefs.weatherCacheTime}\n")
+        weatherLog.append("缓存数据: ${prefs.weatherCacheData}\n\n")
+
+        // Show cached weather data
+        if (prefs.weatherCacheData.isNotEmpty()) {
+            weatherLog.append("✅ 有缓存数据\n")
+        } else {
+            weatherLog.append("❌ 无缓存数据\n")
+        }
+
+        if (prefs.weatherGpsLat != 0.0) {
+            weatherLog.append("✅ GPS 定位已启用 (${prefs.weatherGpsLat}, ${prefs.weatherGpsLng})\n")
+        } else {
+            weatherLog.append("❌ 使用城市 ID 定位\n")
+        }
+
+        val dialog = android.app.AlertDialog.Builder(requireContext())
+            .setTitle("天气调试日志")
+            .setMessage(weatherLog.toString())
+            .setPositiveButton("确定") { _, _ -> }
+            .setNeutralButton("刷新天气") { _, _ ->
+                prefs.weatherCacheTime = 0L
+                viewModel.refreshHome(false)
+                requireContext().showToast("已刷新天气")
+            }
+            .setNegativeButton("刷新 GPS") { _, _ ->
+                refreshGpsLocation()
+            }
+            .create()
+        dialog.show()
+    }
+
+    private fun refreshGpsLocation() {
+        val locationHelper = app.olauncher.helper.LocationHelper(requireContext())
+        if (!locationHelper.hasLocationPermission()) {
+            requireContext().showToast("请先在设置中授予位置权限")
+            return
+        }
+        requireContext().showToast("正在获取 GPS 定位...")
+        lifecycleScope.launch {
+            val gps = locationHelper.getLocation()
+            if (gps != null) {
+                prefs.weatherGpsLat = gps.first
+                prefs.weatherGpsLng = gps.second
+                prefs.weatherGpsTime = System.currentTimeMillis()
+                prefs.weatherCacheTime = 0L // Invalidate weather cache
+                requireContext().showToast("GPS 定位成功: ${gps.first}, ${gps.second}")
+                viewModel.refreshHome(false)
+            } else {
+                requireContext().showToast("GPS 定位失败，请检查定位服务是否开启")
+            }
+        }
     }
 
     private fun showStatusBar() {

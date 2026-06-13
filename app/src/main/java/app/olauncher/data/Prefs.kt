@@ -43,6 +43,14 @@ class Prefs(context: Context) {
     private val LAUNCHER_RESTART_TIMESTAMP = "LAUNCHER_RECREATE_TIMESTAMP"
     private val SHOWN_ON_DAY_OF_YEAR = "SHOWN_ON_DAY_OF_YEAR"
     private val HOME_BUTTON_SHOW_RECENTS = "HOME_BUTTON_SHOW_RECENTS"
+private val WEATHER_ENABLED = "WEATHER_ENABLED"
+    private val WEATHER_LOCATION = "WEATHER_LOCATION"
+    private val WEATHER_CACHE_DATA = "WEATHER_CACHE_DATA"
+    private val WEATHER_CACHE_TIME = "WEATHER_CACHE_TIME"
+    private val WEATHER_API_KEY = "WEATHER_API_KEY"
+    private val WEATHER_API_HOST = "WEATHER_API_HOST"
+    private val WEATHER_CITY_ID = "WEATHER_CITY_ID"
+    private val WEATHER_CITY_NAME = "WEATHER_CITY_NAME"
 
     private val APP_NAME_1 = "APP_NAME_1"
     private val APP_NAME_2 = "APP_NAME_2"
@@ -226,6 +234,10 @@ class Prefs(context: Context) {
     var hiddenApps: MutableSet<String>
         get() = prefs.getStringSet(HIDDEN_APPS, mutableSetOf()) as MutableSet<String>
         set(value) = prefs.edit { putStringSet(HIDDEN_APPS, value).apply() }
+
+    var starredApps: MutableSet<String>
+        get() = prefs.getStringSet("STARRED_APPS", mutableSetOf()) as MutableSet<String>
+        set(value) = prefs.edit { putStringSet("STARRED_APPS", value).apply() }
 
     var hiddenAppsUpdated: Boolean
         get() = prefs.getBoolean(HIDDEN_APPS_UPDATED, false)
@@ -642,4 +654,49 @@ class Prefs(context: Context) {
     fun getAppRenameLabel(appPackage: String): String = prefs.getString(appPackage, "").toString()
 
     fun setAppRenameLabel(appPackage: String, renameLabel: String) = prefs.edit { putString(appPackage, renameLabel) }
+
+    var weatherEnabled: Boolean
+        get() = prefs.getBoolean(WEATHER_ENABLED, true)
+        set(value) = prefs.edit { putBoolean(WEATHER_ENABLED, value).apply() }
+
+    var weatherLocation: String
+        get() = prefs.getString(WEATHER_LOCATION, "101280601").toString()
+        set(value) = prefs.edit { putString(WEATHER_LOCATION, value).apply() }
+
+    var weatherCacheData: String
+        get() = prefs.getString(WEATHER_CACHE_DATA, "").toString()
+        set(value) = prefs.edit { putString(WEATHER_CACHE_DATA, value).apply() }
+
+    var weatherCacheTime: Long
+        get() = prefs.getLong(WEATHER_CACHE_TIME, 0L)
+        set(value) = prefs.edit { putLong(WEATHER_CACHE_TIME, value).apply() }
+
+    var weatherApiKey: String
+        get() = prefs.getString(WEATHER_API_KEY, "53fc78a2a9e146ffb7f1b1e0af1be765").toString()
+        set(value) = prefs.edit { putString(WEATHER_API_KEY, value).apply() }
+
+    var weatherApiHost: String
+        get() = prefs.getString(WEATHER_API_HOST, "mk4y3mmn2a.re.qweatherapi.com").toString()
+        set(value) = prefs.edit { putString(WEATHER_API_HOST, value).apply() }
+
+    var weatherCityId: String
+        get() = prefs.getString(WEATHER_CITY_ID, "101280601").toString()
+        set(value) = prefs.edit { putString(WEATHER_CITY_ID, value).apply() }
+
+    var weatherCityName: String
+        get() = prefs.getString(WEATHER_CITY_NAME, "shenzhen").toString()
+        set(value) = prefs.edit { putString(WEATHER_CITY_NAME, value).apply() }
+
+    var weatherGpsLat: Double
+        get() = prefs.getFloat("WEATHER_GPS_LAT", 0f).toDouble()
+        set(value) = prefs.edit { putFloat("WEATHER_GPS_LAT", value.toFloat()).apply() }
+
+    var weatherGpsLng: Double
+        get() = prefs.getFloat("WEATHER_GPS_LNG", 0f).toDouble()
+        set(value) = prefs.edit { putFloat("WEATHER_GPS_LNG", value.toFloat()).apply() }
+
+    var weatherGpsTime: Long
+        get() = prefs.getLong("WEATHER_GPS_TIME", 0L)
+        set(value) = prefs.edit { putLong("WEATHER_GPS_TIME", value).apply() }
+
 }

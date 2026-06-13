@@ -95,7 +95,8 @@ suspend fun getAppsList(
                         appPackage = app.applicationInfo.packageName,
                         activityClassName = app.componentName.className,
                         isNew = (System.currentTimeMillis() - app.firstInstallTime) < Constants.ONE_HOUR_IN_MILLIS,
-                        user = profile
+                        user = profile,
+                        isStarred = prefs.starredApps.contains(app.applicationInfo.packageName)
                     )
 
                     // if the current app is not OLauncher
@@ -245,7 +246,8 @@ suspend fun getPrivateSpaceApps(
                         appPackage = app.applicationInfo.packageName,
                         activityClassName = app.componentName.className,
                         isNew = false,
-                        user = privateSpaceHandle
+                        user = privateSpaceHandle,
+                        isStarred = prefs.starredApps.contains(app.applicationInfo.packageName)
                     )
                 )
             }

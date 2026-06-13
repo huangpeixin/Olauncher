@@ -8,6 +8,7 @@ import android.content.res.Configuration
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -21,6 +22,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
 import androidx.core.view.setPadding
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProvider
@@ -31,6 +33,8 @@ import app.olauncher.data.AppModel
 import app.olauncher.data.Constants
 import app.olauncher.data.Prefs
 import app.olauncher.databinding.FragmentHomeBinding
+import app.olauncher.helper.LocationHelper
+import app.olauncher.helper.WeatherHelper
 import app.olauncher.helper.appUsagePermissionGranted
 import app.olauncher.helper.dpToPx
 import app.olauncher.helper.expandNotificationDrawer
@@ -49,6 +53,8 @@ import app.olauncher.listener.ViewSwipeTouchListener
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.launch
 
 class HomeFragment : Fragment(), View.OnClickListener, View.OnLongClickListener {
 
@@ -58,6 +64,16 @@ class HomeFragment : Fragment(), View.OnClickListener, View.OnLongClickListener 
 
     private var _binding: FragmentHomeBinding? = null
     private val binding get() = _binding!!
+    private val weatherScope = MainScope()
+    private val locationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            Log.d("HomeFragment", "Location permission granted")
+        } else {
+            Log.w("HomeFragment", "Location permission denied")
+        }
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
@@ -85,6 +101,7 @@ class HomeFragment : Fragment(), View.OnClickListener, View.OnLongClickListener 
         viewModel.isOlauncherDefault()
         if (prefs.showStatusBar) showStatusBar()
         else hideStatusBar()
+        updateWeather()
     }
 
     override fun onClick(view: View) {
@@ -93,6 +110,7 @@ class HomeFragment : Fragment(), View.OnClickListener, View.OnLongClickListener 
             R.id.recents -> {}
             R.id.clock -> openClockApp()
             R.id.date -> openCalendarApp()
+            R.id.weather -> openWeatherApp()
             R.id.setDefaultLauncher -> viewModel.resetLauncherLiveData.call()
             R.id.tvScreenTime -> openScreenTimeDigitalWellbeing()
 
@@ -129,6 +147,42 @@ class HomeFragment : Fragment(), View.OnClickListener, View.OnLongClickListener 
                 prefs.calendarAppClassName,
                 prefs.calendarAppUser
             )
+    }
+
+    private fun openWeatherApp() {
+        // Try common weather app packages
+        val weatherApps = listOf(
+            "com.miui.weather2",           // Xiaomi Weather
+            "com.coloros.weather2",        // OPPO Weather
+            "com.vivo.weather",            // vivo Weather
+            "com.huawei.weather",          // Huawei Weather
+            "net.oneplus.weather",         // OnePlus Weather
+            "com.samsung.android.app.tips",// Samsung Weather (wrapper)
+            "com.sec.android.daemonapp",   // Samsung Weather
+            "com.google.android.apps.weather", // Google Weather
+            "com.tencent.weather.shenzhen", // Tencent Weather
+            "com.qweather.senior",         // 和风天气
+        )
+
+        for (pkg in weatherApps) {
+            if (isPackageInstalled(requireContext(), pkg, "")) {
+                val intent = requireContext().packageManager.getLaunchIntentForPackage(pkg)
+                if (intent != null) {
+                    startActivity(intent)
+                    return
+                }
+            }
+        }
+
+        // Fallback: open weather via intent
+        try {
+            val intent = android.content.Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_APP_WEATHER)
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            requireContext().showToast("未找到天气应用")
+        }
     }
 
     override fun onLongClick(view: View): Boolean {
@@ -233,6 +287,7 @@ class HomeFragment : Fragment(), View.OnClickListener, View.OnLongClickListener 
         binding.setDefaultLauncher.setOnLongClickListener(this)
         binding.tvScreenTime.setOnClickListener(this)
         binding.tvScreenTime.setOnLongClickListener(this)
+        binding.weather?.setOnClickListener(this)
     }
 
     private fun setHomeAlignment(horizontalGravity: Int = prefs.homeAlignment) {
@@ -265,6 +320,51 @@ class HomeFragment : Fragment(), View.OnClickListener, View.OnLongClickListener 
                 dateText = getString(R.string.day_battery, dateText, battery)
         }
         binding.date.text = dateText.replace(".,", ",")
+    }
+
+    private fun updateWeather() {
+        weatherScope.launch {
+            try {
+                if (!prefs.weatherEnabled) {
+                    binding.weather?.visibility = View.GONE
+                    binding.weather?.text = ""
+                    return@launch
+                }
+
+                // Try to get GPS location first
+                val locationHelper = LocationHelper(requireContext())
+                if (locationHelper.hasLocationPermission()) {
+                    val now = System.currentTimeMillis()
+                    val gpsAge = now - prefs.weatherGpsTime
+                    // Only fetch GPS if we don't have a recent fix (older than 30 min)
+                    if (gpsAge > 30 * 60 * 1000L || prefs.weatherGpsLat == 0.0) {
+                        val gps = locationHelper.getLocation()
+                        if (gps != null) {
+                            prefs.weatherGpsLat = gps.first
+                            prefs.weatherGpsLng = gps.second
+                            prefs.weatherGpsTime = System.currentTimeMillis()
+                            Log.d("HomeFragment", "Updated GPS location: ${gps.first}, ${gps.second}")
+                        }
+                    }
+                } else {
+                    // Request permission (non-blocking, will apply on next weather refresh)
+                    locationPermissionLauncher.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                }
+
+                val weather = WeatherHelper(requireContext()).getWeatherText()
+                if (!weather.isNullOrEmpty()) {
+                    binding.weather?.text = weather
+                    binding.weather?.visibility = View.VISIBLE
+                } else {
+                    binding.weather?.visibility = View.GONE
+                    binding.weather?.text = ""
+                }
+            } catch (e: Exception) {
+                Log.e("HomeFragment", "updateWeather error: ${e.message}", e)
+                binding.weather?.visibility = View.GONE
+                binding.weather?.text = ""
+            }
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)

@@ -31,12 +31,19 @@ import app.olauncher.helper.openUrl
 import app.olauncher.helper.showKeyboard
 import app.olauncher.helper.showToast
 import app.olauncher.helper.uninstall
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class AppDrawerFragment : Fragment() {
 
     private lateinit var prefs: Prefs
     private lateinit var adapter: AppDrawerAdapter
     private lateinit var linearLayoutManager: LinearLayoutManager
+
+    private var searchJob: Job? = null
 
     private var flag = Constants.FLAG_LAUNCH_APP
     private var canRename = false
@@ -100,7 +107,11 @@ class AppDrawerFragment : Fragment() {
 
             override fun onQueryTextChange(newText: String): Boolean {
                 try {
-                    adapter.filter.filter(newText)
+                    searchJob?.cancel()
+                    searchJob = MainScope().launch {
+                        delay(300) // 防抖延迟：T9 输入法连续按键时不刷新，等停顿后再搜索
+                        adapter.filter.filter(newText)
+                    }
                     binding.appRename.visibility =
                         if (canRename && newText.isNotBlank()) View.VISIBLE else View.GONE
                     return true
@@ -194,6 +205,21 @@ class AppDrawerFragment : Fragment() {
                 prefs.setAppRenameLabel(identifier, renameLabel)
                 viewModel.getAppList()
             },
+            appStarClickListener = { appModel ->
+                if (appModel.appPackage.isEmpty()) return@AppDrawerAdapter
+                val starredSet = prefs.starredApps.toMutableSet()
+                if (starredSet.contains(appModel.appPackage)) {
+                    starredSet.remove(appModel.appPackage)
+                    requireContext().showToast("已取消置顶")
+                } else {
+                    starredSet.add(appModel.appPackage)
+                    requireContext().showToast("已置顶")
+                }
+                prefs.starredApps = starredSet
+                
+                // 重新加载应用列表以同步状态和排序
+                viewModel.getAppList()
+            },
             privateSpaceToggleListener = {
                 viewModel.togglePrivateSpaceLock()
             },
@@ -261,6 +287,24 @@ class AppDrawerFragment : Fragment() {
         val apps = currentAppList ?: return
         val combined = apps.toMutableList()
 
+        // Sort starred apps to top
+        combined.sortWith { a, b ->
+            when {
+                a.isStarred && !b.isStarred -> -1
+                !a.isStarred && b.isStarred -> 1
+                else -> a.appLabel.compareTo(b.appLabel, true)
+            }
+        }
+
+        // Sort starred apps to top
+        combined.sortWith { a, b ->
+            when {
+                a.isStarred && !b.isStarred -> -1
+                !a.isStarred && b.isStarred -> 1
+                else -> a.appLabel.compareTo(b.appLabel, true)
+            }
+        }
+
         if (flag == Constants.FLAG_LAUNCH_APP && currentPrivateSpaceAvailable) {
             combined.add(AppModel.PrivateSpaceHeader(isLocked = currentPrivateSpaceLocked))
             if (!currentPrivateSpaceLocked) {
@@ -269,6 +313,10 @@ class AppDrawerFragment : Fragment() {
         }
 
         adapter.setAppList(combined)
+        // 确保列表滚动到顶部，让置顶应用可见
+        binding.recyclerView.post {
+            linearLayoutManager.scrollToPositionWithOffset(0, 0)
+        }
         adapter.filter.filter(binding.search.query)
     }
 

@@ -9,6 +9,7 @@ sealed class AppModel : Comparable<AppModel> {
     abstract val appPackage: String
     abstract val user: UserHandle
     abstract val isNew: Boolean
+    abstract val isStarred: Boolean
 
     data class App(
         override val appLabel: String,
@@ -17,6 +18,7 @@ sealed class AppModel : Comparable<AppModel> {
         val activityClassName: String?,
         override val isNew: Boolean = false,
         override val user: UserHandle,
+        override val isStarred: Boolean = false,
     ) : AppModel()
 
     data class PinnedShortcut(
@@ -26,6 +28,7 @@ sealed class AppModel : Comparable<AppModel> {
         val shortcutId: String,
         override val isNew: Boolean = false,
         override val user: UserHandle,
+        override val isStarred: Boolean = false,
     ) : AppModel()
 
     data class PrivateSpaceHeader(
@@ -36,6 +39,7 @@ sealed class AppModel : Comparable<AppModel> {
         override val key: CollationKey? = null
         override val appPackage: String = ""
         override val isNew: Boolean = false
+        override val isStarred: Boolean = false
     }
 
     override fun compareTo(other: AppModel): Int = when {

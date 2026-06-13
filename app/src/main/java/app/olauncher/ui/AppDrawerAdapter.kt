@@ -20,9 +20,12 @@ import app.olauncher.data.AppModel
 import app.olauncher.data.Constants
 import app.olauncher.databinding.AdapterAppDrawerBinding
 import app.olauncher.databinding.AdapterPrivateSpaceHeaderBinding
-import app.olauncher.helper.hideKeyboard
-import app.olauncher.helper.isSystemApp
 import app.olauncher.helper.showKeyboard
+import app.olauncher.helper.showToast
+import app.olauncher.helper.uninstall
+import app.olauncher.helper.isSystemApp
+import app.olauncher.helper.hideKeyboard
+import app.olauncher.helper.Pinyin
 import java.text.Normalizer
 
 class AppDrawerAdapter(
@@ -33,6 +36,7 @@ class AppDrawerAdapter(
     private val appDeleteListener: (AppModel) -> Unit,
     private val appHideListener: (AppModel, Int) -> Unit,
     private val appRenameListener: (AppModel, String) -> Unit,
+    private val appStarClickListener: (AppModel) -> Unit = {},
     private val privateSpaceToggleListener: () -> Unit = {},
     private val privateSpaceSettingsListener: () -> Unit = {},
 ) : ListAdapter<AppModel, RecyclerView.ViewHolder>(DIFF_CALLBACK), Filterable {
@@ -116,7 +120,8 @@ class AppDrawerAdapter(
                     appDeleteListener,
                     appInfoListener,
                     appHideListener,
-                    appRenameListener
+                    appRenameListener,
+                    appStarClickListener
                 )
             }
         } catch (e: Exception) {
@@ -133,8 +138,39 @@ class AppDrawerAdapter(
                 autoLaunch = charSearch?.startsWith(" ")?.not() ?: true
 
                 val appFilteredList = (if (charSearch.isNullOrBlank()) appsList
-                else appsList.filter { app ->
-                    app !is AppModel.PrivateSpaceHeader && appLabelMatches(app.appLabel, charSearch)
+                else {
+                    val searchStr = charSearch.toString().trim().lowercase()
+                    appsList.filter { app ->
+                        app !is AppModel.PrivateSpaceHeader && appLabelMatches(app.appLabel, charSearch)
+                    }.sortedWith(compareBy(
+                        { !it.isStarred }, // 星标置顶
+                        {
+                            // 计算匹配度得分：越小越靠前
+                            val label = it.appLabel
+                            val pinyinStr = Pinyin.toPinyin(label, "").lowercase()
+                            val initialsStr = calculateInitials(label)
+                            
+                            val t9Regex = searchStr.map { t9RegexMap[it] ?: it.toString() }.joinToString("")
+                            val prefixRegex = try { Regex("^$t9Regex") } catch (e: Exception) { return@compareBy 5 }
+                            
+                            when {
+                                // 首字母前缀匹配 (jd -> 京东)
+                                prefixRegex.find(initialsStr)?.range?.start == 0 -> 0
+                                // 全拼前缀匹配 (jing -> 京东)
+                                prefixRegex.find(pinyinStr)?.range?.start == 0 -> 1
+                                // 原文前缀
+                                label.lowercase().startsWith(searchStr) -> 2
+                                // 首字母包含
+                                Regex(t9Regex).containsMatchIn(initialsStr) -> 3
+                                // 全拼包含
+                                Regex(t9Regex).containsMatchIn(pinyinStr) -> 4
+                                // 原文包含
+                                label.lowercase().contains(searchStr) -> 5
+                                else -> 6
+                            }
+                        },
+                        { it.appLabel } // 字母序兜底
+                    ))
                 } as MutableList<AppModel>)
 
                 val filterResults = FilterResults()
@@ -169,15 +205,57 @@ class AppDrawerAdapter(
         }
     }
 
+    // T9 键盘映射：字母/数字 -> 对应按键的所有字符（含数字本身，方便直接输数字搜索）
+    private val t9RegexMap = mapOf(
+        'a' to "[abc2]", 'b' to "[abc2]", 'c' to "[abc2]", '2' to "[abc2]",
+        'd' to "[def3]", 'e' to "[def3]", 'f' to "[def3]", '3' to "[def3]",
+        'g' to "[ghi4]", 'h' to "[ghi4]", 'i' to "[ghi4]", '4' to "[ghi4]",
+        'j' to "[jkl5]", 'k' to "[jkl5]", 'l' to "[jkl5]", '5' to "[jkl5]",
+        'm' to "[mno6]", 'n' to "[mno6]", 'o' to "[mno6]", '6' to "[mno6]",
+        'p' to "[pqrs7]", 'q' to "[pqrs7]", 'r' to "[pqrs7]", 's' to "[pqrs7]", '7' to "[pqrs7]",
+        't' to "[tuv8]", 'u' to "[tuv8]", 'v' to "[tuv8]", '8' to "[tuv8]",
+        'w' to "[wxyz9]", 'x' to "[wxyz9]", 'y' to "[wxyz9]", 'z' to "[wxyz9]", '9' to "[wxyz9]"
+    )
+
+
+    private fun calculateInitials(label: String): String {
+        return label.map { char ->
+            val p = Pinyin.toPinyin(char.toString(), "")
+            if (p.isNotEmpty() && p[0].isLetter()) p[0].lowercase() else null
+        }.filterNotNull().joinToString("")
+    }
+
     private fun appLabelMatches(appLabel: String, charSearch: CharSequence): Boolean {
-        return (appLabel.contains(charSearch.trim(), true) or
-                Normalizer.normalize(appLabel, Normalizer.Form.NFD)
-                    .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
-                    .replace(Regex("[-_+,. ]"), "")
-                    .contains(charSearch, true))
+        val searchStr = charSearch.toString().trim().lowercase()
+        if (searchStr.isEmpty()) return true
+
+        // 1. 原文匹配（英文、数字或已重命名的应用）
+        if (appLabel.contains(searchStr, true)) return true
+
+        // 2. 计算拼音与首字母
+        val pinyinStr = Pinyin.toPinyin(appLabel, "").lowercase()
+        val initialsStr = calculateInitials(appLabel)
+        if (pinyinStr.isEmpty() && initialsStr.isEmpty()) return false
+
+        // 3. 构建 T9 正则
+        val t9Regex = searchStr.map { t9RegexMap[it] ?: it.toString() }.joinToString("")
+
+        return try {
+            val regex = Regex(t9Regex)
+            // 匹配全拼 或 匹配首字母（支持 jd -> 京东）
+            regex.containsMatchIn(pinyinStr) || regex.containsMatchIn(initialsStr)
+        } catch (e: Exception) {
+            false
+        }
     }
 
     fun setAppList(appsList: MutableList<AppModel>) {
+        // 强制排序：1. 置顶应用在前 2. 字母/拼音顺序
+        appsList.sortWith(compareBy<AppModel>(
+            { !it.isStarred }, // 置顶 (isStarred=true -> !true=false -> 0) 排在 未置顶 (isStarred=false -> !false=true -> 1) 前面
+            { it }            // 使用 AppModel 的 compareTo (基于 CollationKey 排序)
+        ))
+
         // Add empty app for bottom padding in recyclerview and assign to list
         appsList.add(
             AppModel.App(
@@ -227,6 +305,7 @@ class AppDrawerAdapter(
             appInfoListener: (AppModel) -> Unit,
             appHideListener: (AppModel, Int) -> Unit,
             appRenameListener: (AppModel, String) -> Unit,
+            appStarClickListener: (AppModel) -> Unit,
         ) = with(binding) {
             appHideLayout.visibility = View.GONE
             renameLayout.visibility = View.GONE
@@ -234,6 +313,7 @@ class AppDrawerAdapter(
 
             // Show indicators in title based on app type and state
             appTitle.text = buildString {
+                if (appModel.isStarred) append("⭐ ")
                 append(appModel.appLabel)
                 if (appModel.isNew) append(" ✦")
             }
@@ -334,6 +414,7 @@ class AppDrawerAdapter(
                 appTitle.visibility = View.VISIBLE
             }
             appHide.setOnClickListener { appHideListener(appModel, bindingAdapterPosition) }
+            appStar.setOnClickListener { appStarClickListener(appModel) }
         }
 
         private fun getAppName(context: Context, appPackage: String, user: UserHandle): String {
